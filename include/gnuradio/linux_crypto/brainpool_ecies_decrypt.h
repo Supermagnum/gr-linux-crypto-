@@ -56,29 +56,40 @@ public:
      * \brief Make a Brainpool ECIES decryption block
      *
      * \param curve Brainpool curve to use ("brainpoolP256r1", "brainpoolP384r1", "brainpoolP512r1")
-     * \param recipient_private_key_pem Recipient's private key in PEM format (optional, can be set via message port)
-     * \param private_key_password Password for encrypted private key (empty if unencrypted)
+     * \param key_source Key source type: "opgp_card" or "kernel_keyring"
+     * \param recipient_key_identifier Key identifier (keygrip for OpenPGP Card, key_id for kernel keyring)
      * \param kdf_info Optional context information for HKDF key derivation (must match encryption)
      * \return shared pointer to the new block
      */
     static sptr make(const std::string& curve = "brainpoolP256r1",
-                    const std::string& recipient_private_key_pem = "",
-                    const std::string& private_key_password = "",
+                    const std::string& key_source = "kernel_keyring",
+                    const std::string& recipient_key_identifier = "",
                     const std::string& kdf_info = "gr-linux-crypto-ecies-v1");
 
     /*!
-     * \brief Set recipient's private key
-     * \param private_key_pem Private key in PEM format
-     * \param password Password for encrypted private key (empty if unencrypted)
+     * \brief Set recipient's key source and identifier
+     * \param key_source Key source type: "opgp_card" or "kernel_keyring"
+     * \param key_identifier Key identifier (keygrip for OpenPGP Card, key_id for kernel keyring)
      */
-    virtual void set_recipient_private_key(const std::string& private_key_pem,
-                                          const std::string& password = "") = 0;
+    virtual void set_recipient_key(const std::string& key_source, const std::string& key_identifier) = 0;
 
     /*!
-     * \brief Get current recipient's private key status
-     * \return true if private key is loaded
+     * \brief Get current key source
+     * \return Key source type ("opgp_card" or "kernel_keyring")
      */
-    virtual bool is_private_key_loaded() const = 0;
+    virtual std::string get_key_source() const = 0;
+
+    /*!
+     * \brief Get current recipient's key identifier
+     * \return Key identifier (keygrip or key_id)
+     */
+    virtual std::string get_recipient_key_identifier() const = 0;
+
+    /*!
+     * \brief Check if key is loaded and available
+     * \return true if key is loaded and available
+     */
+    virtual bool is_key_loaded() const = 0;
 
     /*!
      * \brief Set KDF info parameter

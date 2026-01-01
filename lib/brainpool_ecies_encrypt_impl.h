@@ -28,6 +28,7 @@
 #include <gnuradio/linux_crypto/brainpool_ecies_encrypt.h>
 #include <gnuradio/io_signature.h>
 #include <gnuradio/linux_crypto/brainpool_ec_impl.h>
+#include "openpgp_card_helper.h"
 #include <openssl/evp.h>
 #include <openssl/ec.h>
 #include <vector>
@@ -46,15 +47,23 @@ private:
     std::string d_kdf_info;
     std::shared_ptr<brainpool_ec_impl> d_brainpool_ec;
     
+    std::string d_key_source;
+    std::string d_recipient_key_identifier;
     EVP_PKEY* d_recipient_public_key;
     mutable std::mutex d_mutex;
     
     std::vector<uint8_t> d_input_buffer;
     std::vector<uint8_t> d_output_buffer;
     
+    std::vector<uint8_t> d_key_input_buffer;
+    bool d_use_key_input_port;
+    static constexpr size_t MAX_KEY_BUFFER_SIZE = 4096;
+    
     static constexpr size_t AES_KEY_SIZE = 32;
     static constexpr size_t AES_IV_SIZE = 12;
     static constexpr size_t AES_TAG_SIZE = 16;
+    
+    void process_key_input(const unsigned char* key_data, int n_items);
     
     bool derive_key_hkdf(const std::vector<uint8_t>& shared_secret,
                         std::vector<uint8_t>& key,
@@ -74,15 +83,20 @@ private:
 
 public:
     brainpool_ecies_encrypt_impl(const std::string& curve,
-                                 const std::string& recipient_public_key_pem,
+                                 const std::string& key_source,
+                                 const std::string& recipient_key_identifier,
                                  const std::string& kdf_info);
     ~brainpool_ecies_encrypt_impl();
 
-    void set_recipient_public_key(const std::string& public_key_pem) override;
-    std::string get_recipient_public_key() const override;
+    void set_recipient_key(const std::string& key_source, const std::string& key_identifier) override;
+    std::string get_key_source() const override;
+    std::string get_recipient_key_identifier() const override;
     void set_kdf_info(const std::string& kdf_info) override;
     std::string get_kdf_info() const override;
     std::string get_curve() const override;
+
+private:
+    void load_recipient_public_key();
 
     int work(int noutput_items,
              gr_vector_const_void_star& input_items,

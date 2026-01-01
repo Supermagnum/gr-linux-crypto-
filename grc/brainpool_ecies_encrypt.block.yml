@@ -5,9 +5,9 @@ flags: [python, cpp]
 templates:
   imports: |-
     from gnuradio import linux_crypto
-  make: linux_crypto.brainpool_ecies_encrypt(${curve}, ${recipient_public_key_pem}, ${kdf_info})
+  make: linux_crypto.brainpool_ecies_encrypt(${curve}, ${key_source}, ${recipient_key_identifier}, ${kdf_info})
   callbacks:
-  - set_recipient_public_key(${recipient_public_key_pem})
+  - set_recipient_key(${key_source}, ${recipient_key_identifier})
   - set_kdf_info(${kdf_info})
 parameters:
 - id: curve
@@ -16,11 +16,18 @@ parameters:
   default: '"brainpoolP256r1"'
   options: ['"brainpoolP256r1"', '"brainpoolP384r1"', '"brainpoolP512r1"']
   hide: none
-- id: recipient_public_key_pem
-  label: Recipient Public Key (PEM)
+- id: key_source
+  label: Key Source
+  dtype: string
+  default: '"kernel_keyring"'
+  options: ['"kernel_keyring"', '"opgp_card"']
+  hide: none
+- id: recipient_key_identifier
+  label: Recipient Key Identifier
   dtype: string
   default: '""'
   hide: none
+  comment: "Keygrip for OpenPGP Card, key_id for kernel keyring"
 - id: kdf_info
   label: KDF Info
   dtype: string
@@ -31,6 +38,11 @@ inputs:
   domain: stream
   dtype: byte
   vlen: 1
+- label: key_in
+  domain: stream
+  dtype: byte
+  vlen: 1
+  optional: true
 outputs:
 - label: out
   domain: stream

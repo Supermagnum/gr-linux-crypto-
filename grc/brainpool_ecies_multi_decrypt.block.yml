@@ -5,10 +5,10 @@ flags: [python, cpp]
 templates:
   imports: |-
     from gnuradio import linux_crypto
-  make: linux_crypto.brainpool_ecies_multi_decrypt(${curve}, ${recipient_callsign}, ${recipient_private_key_pem}, ${private_key_password}, ${kdf_info})
+  make: linux_crypto.brainpool_ecies_multi_decrypt(${curve}, ${recipient_callsign}, ${key_source}, ${recipient_key_identifier}, ${kdf_info})
   callbacks:
   - set_recipient_callsign(${recipient_callsign})
-  - set_recipient_private_key(${recipient_private_key_pem}, ${private_key_password})
+  - set_recipient_key(${key_source}, ${recipient_key_identifier})
   - set_kdf_info(${kdf_info})
 parameters:
 - id: curve
@@ -22,16 +22,18 @@ parameters:
   dtype: string
   default: '""'
   hide: none
-- id: recipient_private_key_pem
-  label: Recipient Private Key (PEM)
+- id: key_source
+  label: Key Source
+  dtype: string
+  default: '"kernel_keyring"'
+  options: ['"kernel_keyring"', '"opgp_card"']
+  hide: none
+- id: recipient_key_identifier
+  label: Recipient Key Identifier
   dtype: string
   default: '""'
   hide: none
-- id: private_key_password
-  label: Private Key Password
-  dtype: string
-  default: '""'
-  hide: none
+  comment: "Keygrip for OpenPGP Card, key_id for kernel keyring"
 - id: kdf_info
   label: KDF Info
   dtype: string
@@ -42,6 +44,11 @@ inputs:
   domain: stream
   dtype: byte
   vlen: 1
+- label: key_in
+  domain: stream
+  dtype: byte
+  vlen: 1
+  optional: true
 outputs:
 - label: out
   domain: stream

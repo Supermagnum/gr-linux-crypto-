@@ -56,25 +56,34 @@ public:
      * \brief Make a Brainpool ECIES encryption block
      *
      * \param curve Brainpool curve to use ("brainpoolP256r1", "brainpoolP384r1", "brainpoolP512r1")
-     * \param recipient_public_key_pem Recipient's public key in PEM format (optional, can be set via message port)
+     * \param key_source Key source type: "opgp_card" or "kernel_keyring"
+     * \param recipient_key_identifier Key identifier (keygrip for OpenPGP Card, key_id for kernel keyring)
      * \param kdf_info Optional context information for HKDF key derivation
      * \return shared pointer to the new block
      */
     static sptr make(const std::string& curve = "brainpoolP256r1",
-                    const std::string& recipient_public_key_pem = "",
+                    const std::string& key_source = "kernel_keyring",
+                    const std::string& recipient_key_identifier = "",
                     const std::string& kdf_info = "gr-linux-crypto-ecies-v1");
 
     /*!
-     * \brief Set recipient's public key
-     * \param public_key_pem Public key in PEM format
+     * \brief Set recipient's key source and identifier
+     * \param key_source Key source type: "opgp_card" or "kernel_keyring"
+     * \param key_identifier Key identifier (keygrip for OpenPGP Card, key_id for kernel keyring)
      */
-    virtual void set_recipient_public_key(const std::string& public_key_pem) = 0;
+    virtual void set_recipient_key(const std::string& key_source, const std::string& key_identifier) = 0;
 
     /*!
-     * \brief Get current recipient's public key
-     * \return Public key in PEM format (empty if not set)
+     * \brief Get current key source
+     * \return Key source type ("opgp_card" or "kernel_keyring")
      */
-    virtual std::string get_recipient_public_key() const = 0;
+    virtual std::string get_key_source() const = 0;
+
+    /*!
+     * \brief Get current recipient's key identifier
+     * \return Key identifier (keygrip or key_id)
+     */
+    virtual std::string get_recipient_key_identifier() const = 0;
 
     /*!
      * \brief Set KDF info parameter

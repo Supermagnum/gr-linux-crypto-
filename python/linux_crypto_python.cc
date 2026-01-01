@@ -108,10 +108,13 @@ void bind_brainpool_ecies_encrypt(py::module& m)
         m, "brainpool_ecies_encrypt")
         .def(py::init(&brainpool_ecies_encrypt::make),
              py::arg("curve") = "brainpoolP256r1",
-             py::arg("recipient_public_key_pem") = "",
+             py::arg("key_source") = "kernel_keyring",
+             py::arg("recipient_key_identifier") = "",
              py::arg("kdf_info") = "gr-linux-crypto-ecies-v1")
-        .def("set_recipient_public_key", &brainpool_ecies_encrypt::set_recipient_public_key)
-        .def("get_recipient_public_key", &brainpool_ecies_encrypt::get_recipient_public_key)
+        .def("set_recipient_key", &brainpool_ecies_encrypt::set_recipient_key,
+             py::arg("key_source"), py::arg("key_identifier"))
+        .def("get_key_source", &brainpool_ecies_encrypt::get_key_source)
+        .def("get_recipient_key_identifier", &brainpool_ecies_encrypt::get_recipient_key_identifier)
         .def("set_kdf_info", &brainpool_ecies_encrypt::set_kdf_info)
         .def("get_kdf_info", &brainpool_ecies_encrypt::get_kdf_info)
         .def("get_curve", &brainpool_ecies_encrypt::get_curve);
@@ -125,12 +128,14 @@ void bind_brainpool_ecies_decrypt(py::module& m)
         m, "brainpool_ecies_decrypt")
         .def(py::init(&brainpool_ecies_decrypt::make),
              py::arg("curve") = "brainpoolP256r1",
-             py::arg("recipient_private_key_pem") = "",
-             py::arg("private_key_password") = "",
+             py::arg("key_source") = "kernel_keyring",
+             py::arg("recipient_key_identifier") = "",
              py::arg("kdf_info") = "gr-linux-crypto-ecies-v1")
-        .def("set_recipient_private_key", &brainpool_ecies_decrypt::set_recipient_private_key,
-             py::arg("private_key_pem"), py::arg("password") = "")
-        .def("is_private_key_loaded", &brainpool_ecies_decrypt::is_private_key_loaded)
+        .def("set_recipient_key", &brainpool_ecies_decrypt::set_recipient_key,
+             py::arg("key_source"), py::arg("key_identifier"))
+        .def("get_key_source", &brainpool_ecies_decrypt::get_key_source)
+        .def("get_recipient_key_identifier", &brainpool_ecies_decrypt::get_recipient_key_identifier)
+        .def("is_key_loaded", &brainpool_ecies_decrypt::is_key_loaded)
         .def("set_kdf_info", &brainpool_ecies_decrypt::set_kdf_info)
         .def("get_kdf_info", &brainpool_ecies_decrypt::get_kdf_info)
         .def("get_curve", &brainpool_ecies_decrypt::get_curve);
@@ -167,14 +172,16 @@ void bind_brainpool_ecies_multi_decrypt(py::module& m)
         .def(py::init(&brainpool_ecies_multi_decrypt::make),
              py::arg("curve") = "brainpoolP256r1",
              py::arg("recipient_callsign") = "",
-             py::arg("recipient_private_key_pem") = "",
-             py::arg("private_key_password") = "",
+             py::arg("key_source") = "kernel_keyring",
+             py::arg("recipient_key_identifier") = "",
              py::arg("kdf_info") = "gr-linux-crypto-ecies-v1")
         .def("set_recipient_callsign", &brainpool_ecies_multi_decrypt::set_recipient_callsign)
         .def("get_recipient_callsign", &brainpool_ecies_multi_decrypt::get_recipient_callsign)
-        .def("set_recipient_private_key", &brainpool_ecies_multi_decrypt::set_recipient_private_key,
-             py::arg("private_key_pem"), py::arg("password") = "")
-        .def("is_private_key_loaded", &brainpool_ecies_multi_decrypt::is_private_key_loaded)
+        .def("set_recipient_key", &brainpool_ecies_multi_decrypt::set_recipient_key,
+             py::arg("key_source"), py::arg("key_identifier"))
+        .def("get_key_source", &brainpool_ecies_multi_decrypt::get_key_source)
+        .def("get_recipient_key_identifier", &brainpool_ecies_multi_decrypt::get_recipient_key_identifier)
+        .def("is_key_loaded", &brainpool_ecies_multi_decrypt::is_key_loaded)
         .def("set_kdf_info", &brainpool_ecies_multi_decrypt::set_kdf_info)
         .def("get_kdf_info", &brainpool_ecies_multi_decrypt::get_kdf_info)
         .def("get_curve", &brainpool_ecies_multi_decrypt::get_curve);

@@ -43,14 +43,13 @@ namespace linux_crypto {
 brainpool_ecies_multi_decrypt::sptr
 brainpool_ecies_multi_decrypt::make(const std::string& curve,
                                     const std::string& recipient_callsign,
-                                    const std::string& recipient_private_key_pem,
-                                    const std::string& private_key_password,
+                                    const std::string& key_source,
+                                    const std::string& recipient_key_identifier,
                                     const std::string& kdf_info)
 {
     return gnuradio::get_initial_sptr(
         new brainpool_ecies_multi_decrypt_impl(curve, recipient_callsign,
-                                               recipient_private_key_pem,
-                                               private_key_password, kdf_info));
+                                               key_source, recipient_key_identifier, kdf_info));
 }
 
 std::string
@@ -68,32 +67,27 @@ brainpool_ecies_multi_decrypt_impl::trim_upper(const std::string& str)
 brainpool_ecies_multi_decrypt_impl::brainpool_ecies_multi_decrypt_impl(
     const std::string& curve,
     const std::string& recipient_callsign,
-    const std::string& recipient_private_key_pem,
-    const std::string& private_key_password,
+    const std::string& key_source,
+    const std::string& recipient_key_identifier,
     const std::string& kdf_info)
     : gr::sync_block("brainpool_ecies_multi_decrypt",
-                     gr::io_signature::make(1, 1, sizeof(unsigned char)),
+                     gr::io_signature::make(1, 2, sizeof(unsigned char)),
                      gr::io_signature::make(1, 1, sizeof(unsigned char))),
       d_curve(brainpool_ec_impl::string_to_curve(curve)),
       d_curve_name(curve),
       d_kdf_info(kdf_info),
       d_brainpool_ec(std::make_shared<brainpool_ec_impl>(d_curve)),
       d_recipient_callsign(trim_upper(recipient_callsign)),
-      d_recipient_private_key(nullptr),
-      d_key_loaded(false)
+      d_key_source(key_source),
+      d_recipient_key_identifier(recipient_key_identifier),
+      d_use_key_input_port(false)
 {
-    if (!recipient_private_key_pem.empty()) {
-        set_recipient_private_key(recipient_private_key_pem, private_key_password);
-    }
+    // Key will be loaded on-demand during decryption
 }
 
 brainpool_ecies_multi_decrypt_impl::~brainpool_ecies_multi_decrypt_impl()
 {
-    std::lock_guard<std::mutex> lock(d_mutex);
-    if (d_recipient_private_key) {
-        EVP_PKEY_free(d_recipient_private_key);
-        d_recipient_private_key = nullptr;
-    }
+    // No keys to free - keys are managed by secure sources
 }
 
 size_t
@@ -126,42 +120,46 @@ brainpool_ecies_multi_decrypt_impl::get_recipient_callsign() const
 }
 
 void
-brainpool_ecies_multi_decrypt_impl::set_recipient_private_key(const std::string& private_key_pem,
-                                                             const std::string& password)
+brainpool_ecies_multi_decrypt_impl::set_recipient_key(const std::string& key_source, const std::string& key_identifier)
 {
     std::lock_guard<std::mutex> lock(d_mutex);
     
-    if (d_recipient_private_key) {
-        EVP_PKEY_free(d_recipient_private_key);
-        d_recipient_private_key = nullptr;
-    }
-    
-    d_key_loaded = false;
-    
-    if (private_key_pem.empty()) {
-        return;
-    }
-    
-    BIO* bio = BIO_new_mem_buf(private_key_pem.data(), private_key_pem.size());
-    if (!bio) {
-        return;
-    }
-    
-    const char* passwd = password.empty() ? nullptr : password.c_str();
-    d_recipient_private_key = PEM_read_bio_PrivateKey(bio, nullptr, nullptr,
-                                                      const_cast<char*>(passwd));
-    BIO_free(bio);
-    
-    if (d_recipient_private_key) {
-        d_key_loaded = true;
-    }
+    d_key_source = key_source;
+    d_recipient_key_identifier = key_identifier;
+}
+
+std::string
+brainpool_ecies_multi_decrypt_impl::get_key_source() const
+{
+    std::lock_guard<std::mutex> lock(d_mutex);
+    return d_key_source;
+}
+
+std::string
+brainpool_ecies_multi_decrypt_impl::get_recipient_key_identifier() const
+{
+    std::lock_guard<std::mutex> lock(d_mutex);
+    return d_recipient_key_identifier;
 }
 
 bool
-brainpool_ecies_multi_decrypt_impl::is_private_key_loaded() const
+brainpool_ecies_multi_decrypt_impl::is_key_loaded() const
 {
     std::lock_guard<std::mutex> lock(d_mutex);
-    return d_key_loaded && (d_recipient_private_key != nullptr);
+    
+    if (d_recipient_key_identifier.empty()) {
+        return false;
+    }
+    
+    // If key is from input port, check if we have valid PEM data
+    if (d_key_source == "key_input" && d_use_key_input_port) {
+        // Check if we have a valid PEM key in the identifier
+        return (d_recipient_key_identifier.find("-----BEGIN") != std::string::npos &&
+                d_recipient_key_identifier.find("-----END") != std::string::npos);
+    }
+    
+    // Check if key source is available
+    return openpgp_card_helper::is_key_source_available(d_key_source, d_recipient_key_identifier);
 }
 
 void
@@ -423,13 +421,50 @@ brainpool_ecies_multi_decrypt_impl::decrypt_symmetric_key_ecies(
                              encrypted_key_block.begin() + offset + AES_TAG_SIZE);
     
     std::lock_guard<std::mutex> lock(d_mutex);
-    if (!d_recipient_private_key) {
+    
+    if (d_recipient_key_identifier.empty() || !is_key_loaded()) {
         EVP_PKEY_free(ephemeral_pubkey);
         return false;
     }
     
-    auto shared_secret = d_brainpool_ec->ecdh_exchange(d_recipient_private_key,
-                                                       ephemeral_pubkey);
+    // Perform ECDH based on key source
+    std::vector<uint8_t> shared_secret;
+    
+    if (d_key_source == "key_input" && d_use_key_input_port) {
+        // Key from input port - parse PEM and use OpenSSL ECDH
+        BIO* bio = BIO_new_mem_buf(d_recipient_key_identifier.data(), d_recipient_key_identifier.size());
+        if (bio) {
+            EVP_PKEY* private_key = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+            BIO_free(bio);
+            
+            if (private_key) {
+                // Perform ECDH using OpenSSL
+                EVP_PKEY_CTX* ctx = EVP_PKEY_CTX_new(private_key, nullptr);
+                if (ctx) {
+                    if (EVP_PKEY_derive_init(ctx) > 0 &&
+                        EVP_PKEY_derive_set_peer(ctx, ephemeral_pubkey) > 0) {
+                        size_t secret_len = 0;
+                        if (EVP_PKEY_derive(ctx, nullptr, &secret_len) > 0) {
+                            shared_secret.resize(secret_len);
+                            if (EVP_PKEY_derive(ctx, shared_secret.data(), &secret_len) <= 0) {
+                                shared_secret.clear();
+                            }
+                        }
+                    }
+                    EVP_PKEY_CTX_free(ctx);
+                }
+                EVP_PKEY_free(private_key);
+            }
+        }
+    } else {
+        // Use helper class to perform ECDH with secure key source
+        shared_secret = openpgp_card_helper::ecdh_exchange(
+            d_key_source,
+            d_recipient_key_identifier,
+            ephemeral_pubkey
+        );
+    }
+    
     EVP_PKEY_free(ephemeral_pubkey);
     
     if (shared_secret.empty()) {
@@ -460,9 +495,15 @@ brainpool_ecies_multi_decrypt_impl::work(int noutput_items,
     const unsigned char* in = (const unsigned char*)input_items[0];
     unsigned char* out = (unsigned char*)output_items[0];
     
+    // Process key input from port 1 if present (from nitrokey_interface or kernel_keyring_source)
+    if (input_items.size() > 1 && input_items[1] != nullptr) {
+        const unsigned char* key_in = (const unsigned char*)input_items[1];
+        process_key_input(key_in, noutput_items);
+    }
+    
     std::lock_guard<std::mutex> lock(d_mutex);
     
-    if (!d_key_loaded || !d_recipient_private_key || d_recipient_callsign.empty()) {
+    if (d_recipient_key_identifier.empty() || !is_key_loaded() || d_recipient_callsign.empty()) {
         memset(out, 0, noutput_items);
         return 0;
     }
@@ -597,6 +638,81 @@ brainpool_ecies_multi_decrypt_impl::work(int noutput_items,
     
     std::memcpy(out, plaintext.data(), plaintext.size());
     return plaintext.size();
+}
+
+void
+brainpool_ecies_multi_decrypt_impl::process_key_input(const unsigned char* key_data, int n_items)
+{
+    if (n_items <= 0) {
+        return;
+    }
+    
+    std::lock_guard<std::mutex> lock(d_mutex);
+    
+    if (d_key_input_buffer.size() + static_cast<size_t>(n_items) > MAX_KEY_BUFFER_SIZE) {
+        d_key_input_buffer.clear();
+    }
+    
+    d_key_input_buffer.insert(d_key_input_buffer.end(), key_data, key_data + n_items);
+    
+    // Check if we have a complete PEM key (look for BEGIN/END markers)
+    std::string key_string(reinterpret_cast<const char*>(d_key_input_buffer.data()),
+                          d_key_input_buffer.size());
+    
+    if (key_string.find("-----BEGIN") != std::string::npos &&
+        key_string.find("-----END") != std::string::npos) {
+        // We have a complete PEM key
+        // For decrypt, we can use this key if key_source is set to use key input
+        if (parse_and_store_key(key_string)) {
+            d_use_key_input_port = true;
+            // Update key_source to indicate we're using key input
+            d_key_source = "key_input";
+        }
+        
+        d_key_input_buffer.clear();
+    }
+}
+
+bool
+brainpool_ecies_multi_decrypt_impl::parse_and_store_key(const std::string& key_data_str)
+{
+    if (key_data_str.empty()) {
+        return false;
+    }
+    
+    // For decrypt, we need to check if this is a private key
+    // The key could be from nitrokey_interface or kernel_keyring_source
+    // Both can output PEM format keys
+    
+    // Try parsing as private key first (most common for decrypt)
+    BIO* bio = BIO_new_mem_buf(key_data_str.data(), key_data_str.size());
+    if (!bio) {
+        return false;
+    }
+    
+    // Try private key first
+    EVP_PKEY* pkey = PEM_read_bio_PrivateKey(bio, nullptr, nullptr, nullptr);
+    if (!pkey) {
+        // Try public key (some sources might output public keys)
+        BIO_reset(bio);
+        pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+    }
+    
+    BIO_free(bio);
+    
+    if (!pkey) {
+        return false;
+    }
+    
+    // Store the key identifier as the PEM data itself
+    // This allows the decrypt logic to use it
+    // Note: For secure sources, we should use the key_source/key_identifier
+    // But for key input port, we store the PEM data
+    d_recipient_key_identifier = key_data_str;
+    
+    EVP_PKEY_free(pkey);  // We'll re-parse when needed
+    
+    return true;
 }
 
 } // namespace linux_crypto

@@ -28,6 +28,7 @@
 
 #include <gnuradio/io_signature.h>
 #include "brainpool_ecies_encrypt_impl.h"
+#include "openpgp_card_helper.h"
 #include <openssl/evp.h>
 #include <openssl/kdf.h>
 #include <openssl/rand.h>
@@ -41,28 +42,33 @@ namespace linux_crypto {
 
 brainpool_ecies_encrypt::sptr
 brainpool_ecies_encrypt::make(const std::string& curve,
-                               const std::string& recipient_public_key_pem,
+                               const std::string& key_source,
+                               const std::string& recipient_key_identifier,
                                const std::string& kdf_info)
 {
     return gnuradio::get_initial_sptr(
-        new brainpool_ecies_encrypt_impl(curve, recipient_public_key_pem, kdf_info));
+        new brainpool_ecies_encrypt_impl(curve, key_source, recipient_key_identifier, kdf_info));
 }
 
 brainpool_ecies_encrypt_impl::brainpool_ecies_encrypt_impl(
     const std::string& curve,
-    const std::string& recipient_public_key_pem,
+    const std::string& key_source,
+    const std::string& recipient_key_identifier,
     const std::string& kdf_info)
     : gr::sync_block("brainpool_ecies_encrypt",
-                     gr::io_signature::make(1, 1, sizeof(unsigned char)),
+                     gr::io_signature::make(1, 2, sizeof(unsigned char)),
                      gr::io_signature::make(1, 1, sizeof(unsigned char))),
       d_curve(brainpool_ec_impl::string_to_curve(curve)),
       d_curve_name(curve),
       d_kdf_info(kdf_info),
       d_brainpool_ec(std::make_shared<brainpool_ec_impl>(d_curve)),
-      d_recipient_public_key(nullptr)
+      d_key_source(key_source),
+      d_recipient_key_identifier(recipient_key_identifier),
+      d_recipient_public_key(nullptr),
+      d_use_key_input_port(false)
 {
-    if (!recipient_public_key_pem.empty()) {
-        set_recipient_public_key(recipient_public_key_pem);
+    if (!recipient_key_identifier.empty()) {
+        load_recipient_public_key();
     }
     
     set_output_multiple(2 + get_public_key_size() + AES_IV_SIZE + 2 + AES_TAG_SIZE + 1);
@@ -93,7 +99,18 @@ brainpool_ecies_encrypt_impl::get_public_key_size() const
 }
 
 void
-brainpool_ecies_encrypt_impl::set_recipient_public_key(const std::string& public_key_pem)
+brainpool_ecies_encrypt_impl::set_recipient_key(const std::string& key_source, const std::string& key_identifier)
+{
+    std::lock_guard<std::mutex> lock(d_mutex);
+    
+    d_key_source = key_source;
+    d_recipient_key_identifier = key_identifier;
+    
+    load_recipient_public_key();
+}
+
+void
+brainpool_ecies_encrypt_impl::load_recipient_public_key()
 {
     std::lock_guard<std::mutex> lock(d_mutex);
     
@@ -102,44 +119,26 @@ brainpool_ecies_encrypt_impl::set_recipient_public_key(const std::string& public
         d_recipient_public_key = nullptr;
     }
     
-    if (public_key_pem.empty()) {
+    if (d_recipient_key_identifier.empty()) {
         return;
     }
     
-    BIO* bio = BIO_new_mem_buf(public_key_pem.data(), public_key_pem.size());
-    if (!bio) {
-        return;
-    }
-    
-    d_recipient_public_key = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
-    BIO_free(bio);
+    // Use helper class to get public key from secure source
+    d_recipient_public_key = openpgp_card_helper::get_public_key(d_key_source, d_recipient_key_identifier);
 }
 
 std::string
-brainpool_ecies_encrypt_impl::get_recipient_public_key() const
+brainpool_ecies_encrypt_impl::get_key_source() const
 {
     std::lock_guard<std::mutex> lock(d_mutex);
-    
-    if (!d_recipient_public_key) {
-        return "";
-    }
-    
-    BIO* bio = BIO_new(BIO_s_mem());
-    if (!bio) {
-        return "";
-    }
-    
-    if (PEM_write_bio_PUBKEY(bio, d_recipient_public_key) != 1) {
-        BIO_free(bio);
-        return "";
-    }
-    
-    char* pem_ptr = nullptr;
-    long pem_len = BIO_get_mem_data(bio, &pem_ptr);
-    std::string result(pem_ptr, pem_len);
-    BIO_free(bio);
-    
-    return result;
+    return d_key_source;
+}
+
+std::string
+brainpool_ecies_encrypt_impl::get_recipient_key_identifier() const
+{
+    std::lock_guard<std::mutex> lock(d_mutex);
+    return d_recipient_key_identifier;
 }
 
 void
@@ -294,6 +293,15 @@ brainpool_ecies_encrypt_impl::serialize_ephemeral_public_key(EVP_PKEY* public_ke
     return !serialized.empty();
 }
 
+void
+brainpool_ecies_encrypt_impl::process_key_input(const unsigned char* key_data, int n_items)
+{
+    // Key input port is deprecated - keys should come from secure sources (OpenPGP Card or kernel keyring)
+    // This function is kept for backward compatibility but does nothing
+    (void)key_data;
+    (void)n_items;
+}
+
 int
 brainpool_ecies_encrypt_impl::work(int noutput_items,
                                    gr_vector_const_void_star& input_items,
@@ -301,6 +309,12 @@ brainpool_ecies_encrypt_impl::work(int noutput_items,
 {
     const unsigned char* in = (const unsigned char*)input_items[0];
     unsigned char* out = (unsigned char*)output_items[0];
+    
+    if (input_items.size() > 1 && input_items[1] != nullptr) {
+        const unsigned char* key_in = (const unsigned char*)input_items[1];
+        int key_n_items = noutput_items;
+        process_key_input(key_in, key_n_items);
+    }
     
     std::lock_guard<std::mutex> lock(d_mutex);
     

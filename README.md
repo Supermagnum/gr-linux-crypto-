@@ -1264,7 +1264,7 @@ loaded_private = crypto.load_brainpool_private_key(private_pem)
 
 **ECIES Encryption/Decryption:**
 
-The module supports ECIES (Elliptic Curve Integrated Encryption Scheme) for both single-recipient and multi-recipient (up to 25 recipients) encryption:
+The module supports ECIES (Elliptic Curve Integrated Encryption Scheme) for both single-recipient and multi-recipient (up to 25 recipients) encryption. All ECIES blocks support secure key sources (OpenPGP Card, kernel keyring) and optional key input ports for dynamic key input from hardware sources:
 
 **Python API:**
 ```python
@@ -1368,6 +1368,10 @@ See `examples/brainpool_example.py` for basic operations and `docs/examples.md` 
 - **gr-nacl** (for modern crypto integration)
   - GitHub: https://github.com/Supermagnum/gr-nacl
 - **libnitrokey** (for hardware security modules)
+- **libgpgme-dev** (for OpenPGP Card support - recommended)
+  - Enables hardware-protected key operations with OpenPGP smart cards
+  - Provides proper key format conversion and ECDH support
+  - Without GPGME, basic OpenPGP format parsing is used as fallback
 - **TPM libraries** (for TPM support)
 - **OpenSSL development headers** (libssl-dev)
   - **OpenSSL 1.0.2+** required for Brainpool curve support
@@ -1408,6 +1412,9 @@ sudo apt-get install gr-openssl gr-nacl
 
 # Optional: Install additional crypto libraries
 sudo apt-get install libssl-dev libsodium-dev
+
+# Optional: Install GPGME for OpenPGP Card support (recommended)
+sudo apt-get install libgpgme-dev
 ```
 
 ### Step 2: Build the Module

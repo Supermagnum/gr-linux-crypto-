@@ -28,6 +28,7 @@
 #include <gnuradio/linux_crypto/brainpool_ecies_multi_decrypt.h>
 #include <gnuradio/io_signature.h>
 #include <gnuradio/linux_crypto/brainpool_ec_impl.h>
+#include "openpgp_card_helper.h"
 #include <openssl/evp.h>
 #include <openssl/ec.h>
 #include <vector>
@@ -47,11 +48,19 @@ private:
     std::shared_ptr<brainpool_ec_impl> d_brainpool_ec;
     
     std::string d_recipient_callsign;
-    EVP_PKEY* d_recipient_private_key;
+    std::string d_key_source;
+    std::string d_recipient_key_identifier;
     mutable std::mutex d_mutex;
     
     std::vector<uint8_t> d_input_buffer;
     std::vector<uint8_t> d_output_buffer;
+    
+    std::vector<uint8_t> d_key_input_buffer;
+    bool d_use_key_input_port;
+    static constexpr size_t MAX_KEY_BUFFER_SIZE = 4096;
+    
+    void process_key_input(const unsigned char* key_data, int n_items);
+    bool parse_and_store_key(const std::string& key_data_str);
     
     static constexpr size_t AES_KEY_SIZE = 32;
     static constexpr size_t AES_IV_SIZE = 12;
@@ -60,8 +69,6 @@ private:
     static constexpr size_t MAX_CALLSIGN_LEN = 14;
     static constexpr size_t MAX_RECIPIENTS = 25;
     static constexpr uint8_t FORMAT_VERSION = 0x01;
-    
-    bool d_key_loaded;
     
     bool derive_key_hkdf(const std::vector<uint8_t>& shared_secret,
                         std::vector<uint8_t>& key,
@@ -96,16 +103,17 @@ private:
 public:
     brainpool_ecies_multi_decrypt_impl(const std::string& curve,
                                       const std::string& recipient_callsign,
-                                      const std::string& recipient_private_key_pem,
-                                      const std::string& private_key_password,
+                                      const std::string& key_source,
+                                      const std::string& recipient_key_identifier,
                                       const std::string& kdf_info);
     ~brainpool_ecies_multi_decrypt_impl();
 
     void set_recipient_callsign(const std::string& callsign) override;
     std::string get_recipient_callsign() const override;
-    void set_recipient_private_key(const std::string& private_key_pem,
-                                  const std::string& password) override;
-    bool is_private_key_loaded() const override;
+    void set_recipient_key(const std::string& key_source, const std::string& key_identifier) override;
+    std::string get_key_source() const override;
+    std::string get_recipient_key_identifier() const override;
+    bool is_key_loaded() const override;
     void set_kdf_info(const std::string& kdf_info) override;
     std::string get_kdf_info() const override;
     std::string get_curve() const override;

@@ -59,6 +59,10 @@ private:
     std::vector<uint8_t> d_input_buffer;
     std::vector<uint8_t> d_output_buffer;
     
+    std::vector<uint8_t> d_key_input_buffer;
+    bool d_use_key_input_port;
+    static constexpr size_t MAX_KEY_BUFFER_SIZE = 4096;
+    
     static constexpr size_t AES_KEY_SIZE = 32;
     static constexpr size_t AES_IV_SIZE = 12;
     static constexpr size_t AES_TAG_SIZE = 16;
@@ -106,6 +110,9 @@ private:
     void build_recipient_block(const std::string& callsign,
                               const std::vector<uint8_t>& encrypted_key,
                               std::vector<uint8_t>& block);
+    
+    void process_key_input(const unsigned char* key_data, int n_items);
+    bool parse_and_store_key(const std::string& key_data_str, const std::string& callsign = "");
 
 public:
     brainpool_ecies_multi_encrypt_impl(const std::string& curve,

@@ -36,6 +36,11 @@ inputs:
   domain: stream
   dtype: byte
   vlen: 1
+- label: key_in
+  domain: stream
+  dtype: byte
+  vlen: 1
+  optional: true
 outputs:
 - label: out
   domain: stream

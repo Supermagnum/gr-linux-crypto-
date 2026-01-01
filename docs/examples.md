@@ -665,7 +665,320 @@ if __name__ == "__main__":
     single_recipient_ecies_example()
 ```
 
-### Multi-Recipient ECIES
+### ECIES Blocks with Secure Key Sources
+
+The C++ ECIES blocks (`brainpool_ecies_encrypt`, `brainpool_ecies_decrypt`, `brainpool_ecies_multi_encrypt`, `brainpool_ecies_multi_decrypt`) now support secure key sources instead of PEM keys. This ensures keys are stored securely and never in plain PEM format in user space.
+
+### Supported Key Sources
+
+1. **OpenPGP Card** (`key_source='opgp_card'`):
+   - Hardware-protected, non-extractable keys
+   - Maximum security - private keys never leave the Secure Element
+   - Requires GnuPG and optionally GPGME for full support
+   - Key identifier: keygrip (recommended) or key ID
+
+2. **Kernel Keyring** (`key_source='kernel_keyring'`):
+   - Linux kernel-protected keys
+   - High security, extractable but secure
+   - Key identifier: kernel keyring key ID (integer)
+
+### OpenPGP Card Example
+
+```python
+#!/usr/bin/env python3
+from gnuradio import gr, blocks, linux_crypto
+
+def opgp_card_ecies_example():
+    """ECIES encryption using OpenPGP Card."""
+    tb = gr.top_block()
+    
+    # Get keygrip from GnuPG
+    # Run: gpg --list-secret-keys --keyid-format=long --with-keygrip
+    keygrip = "ABC123DEF4567890ABCDEF1234567890ABCDEF12"
+    
+    # Create encrypt block with OpenPGP Card key
+    encrypt_block = linux_crypto.brainpool_ecies_encrypt(
+        curve='brainpoolP256r1',
+        key_source='opgp_card',
+        recipient_key_identifier=keygrip,
+        kdf_info='gr-linux-crypto-ecies-v1'
+    )
+    
+    # Create decrypt block with OpenPGP Card key
+    decrypt_block = linux_crypto.brainpool_ecies_decrypt(
+        curve='brainpoolP256r1',
+        key_source='opgp_card',
+        recipient_key_identifier=keygrip,
+        kdf_info='gr-linux-crypto-ecies-v1'
+    )
+    
+    # Create source and sink
+    src = blocks.vector_source_b(b"Secret message")
+    sink = blocks.vector_sink_b()
+    
+    # Connect: source -> encrypt -> decrypt -> sink
+    tb.connect(src, encrypt_block, decrypt_block, sink)
+    tb.run()
+    
+    print(f"Decrypted: {bytes(sink.data())}")
+
+if __name__ == "__main__":
+    opgp_card_ecies_example()
+```
+
+### Kernel Keyring Example
+
+```python
+#!/usr/bin/env python3
+from gnuradio import gr, blocks, linux_crypto
+from gr_linux_crypto.keyring_helper import KeyringHelper
+
+def kernel_keyring_ecies_example():
+    """ECIES encryption using kernel keyring."""
+    tb = gr.top_block()
+    
+    # Store private key in kernel keyring
+    helper = KeyringHelper()
+    private_key_pem = b"-----BEGIN PRIVATE KEY-----\n..."
+    key_id = helper.add_key('user', 'ecies_private_key', private_key_pem)
+    
+    # Create encrypt block with kernel keyring key
+    encrypt_block = linux_crypto.brainpool_ecies_encrypt(
+        curve='brainpoolP256r1',
+        key_source='kernel_keyring',
+        recipient_key_identifier=str(key_id),
+        kdf_info='gr-linux-crypto-ecies-v1'
+    )
+    
+    # Create decrypt block with kernel keyring key
+    decrypt_block = linux_crypto.brainpool_ecies_decrypt(
+        curve='brainpoolP256r1',
+        key_source='kernel_keyring',
+        recipient_key_identifier=str(key_id),
+        kdf_info='gr-linux-crypto-ecies-v1'
+    )
+    
+    # Create source and sink
+    src = blocks.vector_source_b(b"Secret message")
+    sink = blocks.vector_sink_b()
+    
+    # Connect: source -> encrypt -> decrypt -> sink
+    tb.connect(src, encrypt_block, decrypt_block, sink)
+    tb.run()
+    
+    print(f"Decrypted: {bytes(sink.data())}")
+
+if __name__ == "__main__":
+    kernel_keyring_ecies_example()
+```
+
+### Getting OpenPGP Card Keygrip
+
+To use OpenPGP Card keys, you need to get the keygrip:
+
+```bash
+# List keys with keygrips
+gpg --list-secret-keys --keyid-format=long --with-keygrip
+
+# Example output:
+# sec   brainpoolP256r1/ABC123DEF4567890 2024-01-15 [SC]
+#       Keygrip = ABC123DEF4567890ABCDEF1234567890ABCDEF12
+# uid           [ultimate] Your Name <your@email.com>
+```
+
+The keygrip is the unique identifier for the key on the OpenPGP Card.
+
+### ECIES Blocks with Key Input Ports
+
+All ECIES blocks support **optional key input ports** that allow dynamic key input from hardware sources like `nitrokey_interface` or `kernel_keyring_source` blocks. This enables flexible key management in GNU Radio flowgraphs.
+
+#### Using Nitrokey Interface with ECIES
+
+```python
+#!/usr/bin/env python3
+from gnuradio import gr, blocks, linux_crypto
+
+def nitrokey_ecies_example():
+    """ECIES encryption using Nitrokey interface block."""
+    tb = gr.top_block()
+    
+    # Create Nitrokey interface block (reads key from slot 0)
+    nitrokey = linux_crypto.nitrokey_interface(slot=0, auto_repeat=False)
+    
+    # Create encrypt block with key input port
+    encrypt_block = linux_crypto.brainpool_ecies_encrypt(
+        curve='brainpoolP256r1',
+        key_source='kernel_keyring',  # Fallback if key input not available
+        recipient_key_identifier='',
+        kdf_info='gr-linux-crypto-ecies-v1'
+    )
+    
+    # Create decrypt block with key input port
+    decrypt_block = linux_crypto.brainpool_ecies_decrypt(
+        curve='brainpoolP256r1',
+        key_source='kernel_keyring',  # Fallback if key input not available
+        recipient_key_identifier='',
+        kdf_info='gr-linux-crypto-ecies-v1'
+    )
+    
+    # Create source and sink
+    src = blocks.vector_source_b(b"Secret message")
+    sink = blocks.vector_sink_b()
+    
+    # Connect: source -> encrypt
+    # Connect: nitrokey -> encrypt (key input port 1)
+    tb.connect(src, (encrypt_block, 0))
+    tb.connect(nitrokey, (encrypt_block, 1))  # Key input port
+    
+    # Connect: encrypt -> decrypt
+    # Connect: nitrokey -> decrypt (key input port 1)
+    tb.connect(encrypt_block, (decrypt_block, 0))
+    tb.connect(nitrokey, (decrypt_block, 1))  # Key input port
+    
+    # Connect: decrypt -> sink
+    tb.connect(decrypt_block, sink)
+    
+    tb.run()
+    
+    print(f"Decrypted: {bytes(sink.data())}")
+
+if __name__ == "__main__":
+    nitrokey_ecies_example()
+```
+
+#### Using Kernel Keyring Source with ECIES
+
+```python
+#!/usr/bin/env python3
+from gnuradio import gr, blocks, linux_crypto
+from gr_linux_crypto.keyring_helper import KeyringHelper
+
+def kernel_keyring_source_ecies_example():
+    """ECIES encryption using kernel keyring source block."""
+    tb = gr.top_block()
+    
+    # Store key in kernel keyring
+    helper = KeyringHelper()
+    private_key_pem = b"-----BEGIN PRIVATE KEY-----\n..."
+    key_id = helper.add_key('user', 'ecies_key', private_key_pem)
+    
+    # Create kernel keyring source block
+    keyring_src = linux_crypto.kernel_keyring_source(key_id=key_id, auto_repeat=False)
+    
+    # Create encrypt block with key input port
+    encrypt_block = linux_crypto.brainpool_ecies_encrypt(
+        curve='brainpoolP256r1',
+        key_source='kernel_keyring',
+        recipient_key_identifier=str(key_id),
+        kdf_info='gr-linux-crypto-ecies-v1'
+    )
+    
+    # Create decrypt block with key input port
+    decrypt_block = linux_crypto.brainpool_ecies_decrypt(
+        curve='brainpoolP256r1',
+        key_source='kernel_keyring',
+        recipient_key_identifier=str(key_id),
+        kdf_info='gr-linux-crypto-ecies-v1'
+    )
+    
+    # Create source and sink
+    src = blocks.vector_source_b(b"Secret message")
+    sink = blocks.vector_sink_b()
+    
+    # Connect: source -> encrypt
+    # Connect: keyring_src -> encrypt (key input port 1)
+    tb.connect(src, (encrypt_block, 0))
+    tb.connect(keyring_src, (encrypt_block, 1))  # Key input port
+    
+    # Connect: encrypt -> decrypt
+    # Connect: keyring_src -> decrypt (key input port 1)
+    tb.connect(encrypt_block, (decrypt_block, 0))
+    tb.connect(keyring_src, (decrypt_block, 1))  # Key input port
+    
+    # Connect: decrypt -> sink
+    tb.connect(decrypt_block, sink)
+    
+    tb.run()
+    
+    print(f"Decrypted: {bytes(sink.data())}")
+
+if __name__ == "__main__":
+    kernel_keyring_source_ecies_example()
+```
+
+#### Multi-Recipient ECIES with Key Input
+
+```python
+#!/usr/bin/env python3
+from gnuradio import gr, blocks, linux_crypto
+
+def multi_recipient_key_input_example():
+    """Multi-recipient ECIES with key input from Nitrokey."""
+    tb = gr.top_block()
+    
+    # Create Nitrokey interface block
+    nitrokey = linux_crypto.nitrokey_interface(slot=0, auto_repeat=False)
+    
+    # Create multi-encrypt block with key input port
+    encrypt_block = linux_crypto.brainpool_ecies_multi_encrypt(
+        curve='brainpoolP256r1',
+        callsigns=['W1ABC', 'K2XYZ'],
+        key_store_path='',
+        kdf_info='gr-linux-crypto-ecies-v1',
+        symmetric_cipher='aes-gcm'
+    )
+    
+    # Create source and sink
+    src = blocks.vector_source_b(b"Message for multiple recipients")
+    sink = blocks.vector_sink_b()
+    
+    # Connect: source -> encrypt
+    # Connect: nitrokey -> encrypt (key input port 1)
+    tb.connect(src, (encrypt_block, 0))
+    tb.connect(nitrokey, (encrypt_block, 1))  # Key input port
+    
+    # Connect: encrypt -> sink
+    tb.connect(encrypt_block, sink)
+    
+    tb.run()
+    
+    print(f"Encrypted length: {len(sink.data())} bytes")
+
+if __name__ == "__main__":
+    multi_recipient_key_input_example()
+```
+
+**Notes:**
+- Key input ports are **optional** - blocks work without them using secure key sources
+- Keys from input ports take precedence over secure key sources
+- PEM keys are automatically detected by looking for `-----BEGIN` and `-----END` markers
+- For multi-recipient encrypt, the key from input port is associated with the first callsign in the recipient list
+- Maximum key buffer size is 4096 bytes
+
+### Dependencies
+
+**Required:**
+- GnuPG (for OpenPGP Card access)
+- GnuPG Agent (for PIN handling)
+- scdaemon (for smart card communication)
+- pcscd (for PC/SC smart card interface)
+
+**Optional (Recommended):**
+- GPGME (libgpgme-dev) - Recommended for full OpenPGP Card support
+  - Provides proper OpenPGP format parsing and key conversion
+  - Enables better integration with GnuPG and smart cards
+  - Without GPGME, a basic OpenPGP format parser is used as fallback
+  - Install: `sudo apt-get install libgpgme-dev`
+
+### Security Benefits
+
+1. **Hardware Protection**: OpenPGP Card keys stored in tamper-resistant Secure Element
+2. **No Key Extraction**: Private keys cannot be extracted from OpenPGP Card
+3. **PIN Protection**: Operations require PIN authentication
+4. **Physical Security**: Device removal clears operations
+5. **Kernel Protection**: Kernel keyring keys are kernel-protected
+
+## Multi-Recipient ECIES
 
 Multi-recipient ECIES allows encrypting a message for up to 25 recipients. Each recipient receives an encrypted copy of the symmetric key, while the payload is encrypted once.
 

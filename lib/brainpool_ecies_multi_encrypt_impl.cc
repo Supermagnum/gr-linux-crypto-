@@ -62,7 +62,7 @@ brainpool_ecies_multi_encrypt_impl::brainpool_ecies_multi_encrypt_impl(
     const std::string& kdf_info,
     const std::string& symmetric_cipher)
     : gr::sync_block("brainpool_ecies_multi_encrypt",
-                     gr::io_signature::make(1, 1, sizeof(unsigned char)),
+                     gr::io_signature::make(1, 2, sizeof(unsigned char)),  // Data input, optional key input
                      gr::io_signature::make(1, 1, sizeof(unsigned char))),
       d_curve(brainpool_ec_impl::string_to_curve(curve)),
       d_curve_name(curve),
@@ -666,6 +666,12 @@ brainpool_ecies_multi_encrypt_impl::work(int noutput_items,
     const unsigned char* in = (const unsigned char*)input_items[0];
     unsigned char* out = (unsigned char*)output_items[0];
     
+    // Process key input from port 1 if present (from nitrokey_interface or kernel_keyring_source)
+    if (input_items.size() > 1 && input_items[1] != nullptr) {
+        const unsigned char* key_in = (const unsigned char*)input_items[1];
+        process_key_input(key_in, noutput_items);
+    }
+    
     std::lock_guard<std::mutex> lock(d_mutex);
     
     if (d_callsigns.empty()) {
@@ -680,23 +686,43 @@ brainpool_ecies_multi_encrypt_impl::work(int noutput_items,
     
     std::vector<EVP_PKEY*> recipient_public_keys;
     for (const auto& callsign : d_callsigns) {
-        std::string public_key_pem;
-        if (!get_public_key_from_store(callsign, public_key_pem)) {
-            memset(out, 0, noutput_items);
-            return 0;
-        }
+        EVP_PKEY* pkey = nullptr;
         
-        BIO* bio = BIO_new_mem_buf(public_key_pem.data(), public_key_pem.size());
-        if (!bio) {
-            memset(out, 0, noutput_items);
-            return 0;
-        }
-        
-        EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
-        BIO_free(bio);
-        if (!pkey) {
-            memset(out, 0, noutput_items);
-            return 0;
+        // First, check if we have a key from the key input port
+        if (d_use_key_input_port && d_recipient_keys.find(callsign) != d_recipient_keys.end()) {
+            pkey = d_recipient_keys[callsign];
+            // Increment reference count (we'll free it later)
+            EVP_PKEY_up_ref(pkey);
+        } else {
+            // Fall back to key store
+            std::string public_key_pem;
+            if (!get_public_key_from_store(callsign, public_key_pem)) {
+                // Free already loaded keys
+                for (auto* key : recipient_public_keys) {
+                    EVP_PKEY_free(key);
+                }
+                memset(out, 0, noutput_items);
+                return 0;
+            }
+            
+            BIO* bio = BIO_new_mem_buf(public_key_pem.data(), public_key_pem.size());
+            if (!bio) {
+                for (auto* key : recipient_public_keys) {
+                    EVP_PKEY_free(key);
+                }
+                memset(out, 0, noutput_items);
+                return 0;
+            }
+            
+            pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+            BIO_free(bio);
+            if (!pkey) {
+                for (auto* key : recipient_public_keys) {
+                    EVP_PKEY_free(key);
+                }
+                memset(out, 0, noutput_items);
+                return 0;
+            }
         }
         
         recipient_public_keys.push_back(pkey);
@@ -797,6 +823,80 @@ brainpool_ecies_multi_encrypt_impl::work(int noutput_items,
     offset += tag.size();
     
     return offset;
+}
+
+void
+brainpool_ecies_multi_encrypt_impl::process_key_input(const unsigned char* key_data, int n_items)
+{
+    if (n_items <= 0) {
+        return;
+    }
+    
+    std::lock_guard<std::mutex> lock(d_mutex);
+    
+    if (d_key_input_buffer.size() + static_cast<size_t>(n_items) > MAX_KEY_BUFFER_SIZE) {
+        d_key_input_buffer.clear();
+    }
+    
+    d_key_input_buffer.insert(d_key_input_buffer.end(), key_data, key_data + n_items);
+    
+    // Check if we have a complete PEM key (look for BEGIN/END markers)
+    std::string key_string(reinterpret_cast<const char*>(d_key_input_buffer.data()),
+                          d_key_input_buffer.size());
+    
+    if (key_string.find("-----BEGIN") != std::string::npos &&
+        key_string.find("-----END") != std::string::npos) {
+        // We have a complete PEM key
+        // For multi-recipient, we need to know which callsign this key is for
+        // For now, if we have only one callsign, use it; otherwise, try to parse callsign from key
+        // or use the first callsign as default
+        
+        std::string callsign_to_use;
+        if (d_callsigns.size() == 1) {
+            callsign_to_use = d_callsigns[0];
+        } else if (!d_callsigns.empty()) {
+            // Use first callsign as default - user should set callsigns before connecting key input
+            callsign_to_use = d_callsigns[0];
+        }
+        
+        if (!callsign_to_use.empty()) {
+            parse_and_store_key(key_string, callsign_to_use);
+            d_use_key_input_port = true;
+        }
+        
+        d_key_input_buffer.clear();
+    }
+}
+
+bool
+brainpool_ecies_multi_encrypt_impl::parse_and_store_key(const std::string& key_data_str, const std::string& callsign)
+{
+    if (key_data_str.empty() || callsign.empty()) {
+        return false;
+    }
+    
+    // Parse PEM key
+    BIO* bio = BIO_new_mem_buf(key_data_str.data(), key_data_str.size());
+    if (!bio) {
+        return false;
+    }
+    
+    EVP_PKEY* pkey = PEM_read_bio_PUBKEY(bio, nullptr, nullptr, nullptr);
+    BIO_free(bio);
+    
+    if (!pkey) {
+        return false;
+    }
+    
+    // Store the key in the recipient keys map
+    // Free existing key if present
+    if (d_recipient_keys.find(callsign) != d_recipient_keys.end()) {
+        EVP_PKEY_free(d_recipient_keys[callsign]);
+    }
+    
+    d_recipient_keys[callsign] = pkey;
+    
+    return true;
 }
 
 } // namespace linux_crypto

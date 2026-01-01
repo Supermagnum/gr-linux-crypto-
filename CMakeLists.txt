@@ -25,6 +25,9 @@ pkg_check_modules(KEYUTILS REQUIRED libkeyutils)
 pkg_check_modules(OPENSSL QUIET openssl)
 pkg_check_modules(SODIUM QUIET libsodium)
 
+# Optional GPGME support for OpenPGP Card operations
+pkg_check_modules(GPGME QUIET gpgme)
+
 # Optional hardware security module support
 # Try libnitrokey-1 first (actual package name), fall back to libnitrokey
 pkg_check_modules(NITROKEY QUIET libnitrokey-1 libnitrokey)
@@ -95,6 +98,7 @@ set(gr_linux_crypto_sources
     lib/kernel_keyring_source_impl.cc
     lib/nitrokey_interface_impl.cc
     lib/kernel_crypto_aes_impl.cc
+    lib/openpgp_card_helper.cc
 )
 
 if(OPENSSL_FOUND)
@@ -111,6 +115,7 @@ endif()
 
 set(gr_linux_crypto_headers
     lib/kernel_keyring_source_impl.h
+    lib/openpgp_card_helper.h
     lib/nitrokey_interface_impl.h
     lib/kernel_crypto_aes_impl.h
 )
@@ -165,6 +170,12 @@ endif()
 if(SODIUM_FOUND)
     target_link_libraries(gnuradio-linux-crypto ${SODIUM_LIBRARIES})
     target_compile_definitions(gnuradio-linux-crypto PRIVATE HAVE_SODIUM)
+endif()
+
+if(GPGME_FOUND)
+    target_link_libraries(gnuradio-linux-crypto ${GPGME_LIBRARIES})
+    target_include_directories(gnuradio-linux-crypto PRIVATE ${GPGME_INCLUDE_DIRS})
+    target_compile_definitions(gnuradio-linux-crypto PRIVATE HAVE_GPGME)
 endif()
 
 if(NITROKEY_FOUND)
@@ -330,6 +341,7 @@ else()
 endif()
 message(STATUS "  OpenSSL support: ${OPENSSL_FOUND}")
 message(STATUS "  Sodium support: ${SODIUM_FOUND}")
+message(STATUS "  GPGME support: ${GPGME_FOUND}")
 message(STATUS "  Nitrokey support: ${NITROKEY_FOUND}")
 message(STATUS "  Python bindings: ${ENABLE_PYTHON}")
 message(STATUS "  GRC blocks: ${ENABLE_GRC}")
