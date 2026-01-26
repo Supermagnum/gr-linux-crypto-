@@ -10,11 +10,19 @@ if(POLICY CMP0057)
     cmake_policy(SET CMP0057 NEW)
 endif()
 
+project(gr-linux-crypto)
+
 ########################################################################
 # Find dependencies
 ########################################################################
 # Set CMAKE_MODULE_PATH to find GNU Radio CMake modules
-list(APPEND CMAKE_MODULE_PATH /usr/lib/x86_64-linux-gnu/cmake/gnuradio)
+# Search in common installation locations
+list(APPEND CMAKE_MODULE_PATH
+    /usr/local/lib/cmake/gnuradio
+    /usr/lib/x86_64-linux-gnu/cmake/gnuradio
+    /usr/lib/cmake/gnuradio
+    ${CMAKE_INSTALL_PREFIX}/lib/cmake/gnuradio
+)
 include(GrBoost)
 
 # Required dependencies
